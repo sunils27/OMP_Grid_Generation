@@ -6,8 +6,9 @@ using namespace std;
 #include <omp.h>
 #include <cmath>
 #include "Poisson.h"
+#include <windows.h>
 double epsx, epsy;
-const double eps = 1.0E-10;
+const double eps = 1.0E-7;
 
 //omp lock for eps updating
 omp_lock_t eps_lock;
@@ -144,13 +145,16 @@ int main ( int argc, char* argv[] )
 	Matrix* y;
 	int nx;
 	int ny;
-	nx = 11;
-	ny = 11;
+	nx = 51;
+	ny = 51;
 	x = new Matrix( nx, ny );
 	y = new Matrix( nx, ny );
 	double xlen, ylen;
-	xlen = 1.0;
-	ylen = 1.0;
+	xlen = 0.2;
+	ylen = 0.1;
+	double xmin, ymin = 0.0;
+	xmin = 0.1;
+	ymin = 0.1;
 
 
 	double dx, dy;
@@ -159,26 +163,26 @@ int main ( int argc, char* argv[] )
 	//lower boundary
 	for ( int i=0;i<nx;i++ )
 	{
-		x->SetAt( i, 0, dx*(double)(i) );
-		y->SetAt( i, 0, 0 );
+		x->SetAt( i, 0, xmin + dx*(double)(i) );
+		y->SetAt( i, 0, ymin + 0 );
 	}
 	//left boundary
 	for ( int j=0;j<ny;j++ )
 	{
-		x->SetAt( 0, j, 0 );
-		y->SetAt( 0, j, dy*(double)j );
+		x->SetAt( 0, j, xmin + 0 );
+		y->SetAt( 0, j, ymin + dy*(double)j );
 	}
 	//right boundary
 	for ( int j=0;j<ny;j++ )
 	{
-		x->SetAt( nx-1, j, xlen );
-		y->SetAt( nx-1, j, dy*(double)j );
+		x->SetAt( nx-1, j, xmin + xlen );
+		y->SetAt( nx-1, j, ymin + dy*(double)j );
 	}
 	//upper boundary
 	for ( int i=0;i<nx;i++ )
 	{
-		x->SetAt( i, ny-1, dx*(double)(i) );
-		y->SetAt( i, ny-1, (ylen) +(double)(i)*dx/2.0 - dx*dx*2.0);//
+		x->SetAt( i, ny-1, xmin + dx*(double)(i) );
+		y->SetAt( i, ny-1, ymin + (ylen) +(double)(i)*dx/2.0 - dx*dx*2.0);//
 	}
 	//WriteGrid( x, y, "grid.dat" ); //use this for debugging Dirichlet boundaries
 
@@ -191,17 +195,6 @@ int main ( int argc, char* argv[] )
 	PoissonGrid( x, y, eps, xlen, ylen );
 	cout<<"Time :"<<omp_get_wtime()-st<<" Eps x: "<<eps[0]<<"  Eps y: "<<eps[1]<<" Iterations: "<<iter<<endl;
 	WriteGrid( x, y, "grid.dat" );
-
-
-	/*Poisson* p = new Poisson( nt );
-	p->SetInput( x, y );
-	//p->Add( x, y, sum );
-	p->IterateAndSolve( 0.001, 10000 );
-	//x->DebugMatrix();
-	//y->DebugMatrix();
-	//sum->DebugMatrix();
-	p->WriteGrid( "grid.dat" );*/
-
 
 
 	//clean up
