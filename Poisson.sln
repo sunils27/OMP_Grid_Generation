@@ -1,9 +1,9 @@
 ﻿
-Microsoft Visual Studio Solution File, Format Version 10.00
-# Visual Studio 2008
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Poisson", "Poisson\Poisson.vcproj", "{E44D7462-565F-4642-A1EB-1735A32A023E}"
+Microsoft Visual Studio Solution File, Format Version 11.00
+# Visual Studio 2010
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Poisson", "Poisson\Poisson.vcxproj", "{E44D7462-565F-4642-A1EB-1735A32A023E}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "seq", "seq\seq.vcproj", "{B05883E1-69F1-4F81-9451-C2B1DFB9F734}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "seq", "seq\seq.vcxproj", "{B05883E1-69F1-4F81-9451-C2B1DFB9F734}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

@@ -11,7 +11,7 @@
 			<DebugSettings
 				Command="$(TargetPath)"
 				WorkingDirectory=""
-				CommandArguments=""
+				CommandArguments="4"
 				Attach="false"
 				DebuggerType="3"
 				Remote="1"
@@ -22,7 +22,7 @@
 				SQLDebugging=""
 				Environment=""
 				EnvironmentMerge="true"
-				DebuggerFlavor=""
+				DebuggerFlavor="0"
 				MPIRunCommand=""
 				MPIRunArguments=""
 				MPIRunWorkingDirectory=""
@@ -67,7 +67,7 @@
 			<DebugSettings
 				Command="$(TargetPath)"
 				WorkingDirectory=""
-				CommandArguments="2"
+				CommandArguments="4"
 				Attach="false"
 				DebuggerType="3"
 				Remote="1"

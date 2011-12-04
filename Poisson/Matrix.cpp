@@ -17,7 +17,7 @@ Matrix::~Matrix(void)
 	delete [] matrix;
 }
 ////////////////////////////////////////////////////////////////////////////////
-int Matrix::GetAt(int r, int c, double& val)
+inline int Matrix::GetAt(int r, int c, double& val)
 {
 	//TODO
 	//check limits
