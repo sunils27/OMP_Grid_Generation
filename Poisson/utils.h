@@ -19,23 +19,38 @@ Matrix* ComputeFunction( Matrix* a, Matrix* xvals )
 	return ret;
 }
 
-void WriteGrid( Matrix* xgrid, Matrix* ygrid, string fName )
+void WriteGrid( Matrix* xgrid, Matrix* ygrid, Matrix* u, Matrix* T, string fName )
 {
 	cout<<"Writing grid to "<<fName<<" ...";
 	ofstream fout;
 
 	fout.open( fName.c_str() );
 	fout<<"TITLE = "<<'"'<<"Solid Grid"<<'"'<<endl;
-	fout<<"VARIABLES = "<<'"'<<'x'<<'"'<<"\t"<<'"'<<'y'<<'"'<<"\t"<<endl;
+	fout<<"VARIABLES = "<<'"'<<'x'<<'"'<<"\t"<<'"'<<'y'<<'"'<<"\t";
+	if ( u != NULL )
+		fout<<'"'<<'u'<<'"'<<"\t";
+	if ( T != NULL )
+		fout<<'"'<<'T'<<'"'<<"\t";
+	fout<<endl;
 	fout<<"ZONE "<<"I= "<<xgrid->GetNumCols()<<"\t J= "<<xgrid->GetNumRows()<<endl;
-	fout<<"DT = ( SINGLE SINGLE )"<<endl;
+	fout<<"DT = ( SINGLE SINGLE ";
+	if ( u != NULL )
+		fout<<"SINGLE ";
+	if ( T != NULL )
+		fout<<" SINGLE ";
+	fout<<" )"<<endl;
 	for ( int j=0;j<xgrid->GetNumRows();j++ )
 	{
 		for ( int i=0;i<xgrid->GetNumCols();i++ )
 		{
 
 			fout<<xgrid->GetAt( j, i )<<" "<<
-				ygrid->GetAt( j, i )<<endl;
+				ygrid->GetAt( j, i )<<" ";
+			if ( u != NULL )
+				fout<<u->GetAt( j, i ) <<" ";
+			if ( T != NULL )
+				fout<<T->GetAt( j, i );
+			fout<<endl;
 		}
 	}
 	cout<<" Done "<<endl;
@@ -48,3 +63,10 @@ void PrintVector( gsl_vector* vect )
 	for ( size_t i=0;i<vect->size;i++ )
 		cout<<i<<" : "<<gsl_vector_get( vect, i )<<endl;
 }
+
+void ApplyFieldDirichlet( Matrix* field, int i, int j )
+{
+	//apply Dirichlet BC on a field Matrix
+
+}
+

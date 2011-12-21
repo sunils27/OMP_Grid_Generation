@@ -12,6 +12,25 @@ Matrix::Matrix(int nRows, int nCols)
 		matrix[i] = (double)rand()/(double)RAND_MAX;
 }
 ////////////////////////////////////////////////////////////////////////////////
+Matrix::Matrix(int nRows, int nCols, bool init=1)
+{
+	//if init is false, make everything zero
+	srand( 8678764 );
+	nR = nRows;
+	nC = nCols;
+	size = nR*nC;
+	matrix = new double[size];
+	//zero everything out
+	double val;
+	for ( int i=0;i<size;i++ )
+	{
+		if ( init == false ) val = 0.0;
+		else 
+			val = (double)rand()/(double)RAND_MAX;
+		matrix[i] = val;
+	}
+}
+////////////////////////////////////////////////////////////////////////////////
 Matrix::~Matrix(void)
 {
 	delete [] matrix;

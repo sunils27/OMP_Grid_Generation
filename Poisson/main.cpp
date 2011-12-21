@@ -14,6 +14,8 @@ using namespace std;
    #include "utils.h"
  }
 const double eps = 1.0E-12;
+const double pDrop = -10.0e-3;   //set the value of pressure drop
+const double mu = 1.0e-3;	//set the value of dynamic viscosity
 
 //GLOBALS
 typedef struct 
@@ -50,6 +52,14 @@ Matrix* xlchan;
 Matrix* ylchan;
 Matrix* xuchan;
 Matrix* yuchan;
+//field variables
+Matrix* ufluid;
+Matrix* ulchan;
+Matrix* uuchan;
+Matrix* Tfin;
+Matrix* Tlbase;
+Matrix* Tubase;
+//thread info structs
 thread_info t1info;
 thread_info t2info;
 thread_info t3info;
@@ -57,9 +67,34 @@ thread_info t4info;
 thread_info t5info;
 thread_info t6info;
 
-void SetupFluidGrid( )
+unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt );
+
+void UpdateNeumannBoundary( Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate )
 {
+	double tmp;
+	int lim = 0;
+	if ( iupdate ) //update for a given i, along column
+	{
+	}
+	if ( jupdate ) //update for a given j, along row
+	{
+		//lim = f->GetNumRows();
+		for ( int i=0;i<f.GetNumRows();i++ )
+		{
+			tmp = ( 4.0*f.GetAt(i,alongj-1) - f.GetAt(i,alongj-2) )/3.0;
+			f.SetAt( i, alongj, tmp );
+		}
+	}
 }
+
+void SolverFluid( double xlen, double ylen )
+{
+	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2 );
+	UpdateNeumannBoundary( *ufluid, 0, 0, ufluid->GetNumCols()-1, 1 );
+
+}
+
+
 
 void readargs( int argc, char* argv[] )
 {
@@ -67,15 +102,15 @@ void readargs( int argc, char* argv[] )
 	//for ( int i=0;i<argc;i++ )
 		//cout<<i<<" :"<<argv[i]<<endl;
 	{
-		nt = atoi( argv[1] );
-		basethk = atof( argv[2] );
-		spacing = atof( argv[3] );
-		int numyvals = argc - 4;
+		//nt = atoi( argv[1] );
+		basethk = atof( argv[1] );
+		spacing = atof( argv[2] );
+		int numyvals = argc - 3;
 		degree = numyvals - 1;
 		//assign the yvals matrix
 		yvals = new Matrix( 1, numyvals );
 		for ( int i=0;i<numyvals;i++ )
-			yvals->SetAt( 0, i, atof(argv[i+4]) );
+			yvals->SetAt( 0, i, atof(argv[i+3]) );
 	}
 }
 
@@ -135,7 +170,7 @@ unsigned int __stdcall  PoissonGrid( void* pVoid )//( Matrix* x, Matrix* y, doub
 				g12 = xSubXi*xSubEta + ySubXi*ySubEta;
 				g22 = xSubXi*xSubXi + ySubXi*ySubXi;
 				J = xSubXi*ySubEta - xSubEta*ySubXi;
-				Q = 0.0E-1;//*exp(-1.0*fabs(j*deltaXi-1.0));
+				Q = 0.0;//-10.01*exp(-10.0*fabs(j*deltaXi-0.5));
 				//-----------------denominators----------------------
 				den1 = g11/(deltaXi*deltaXi);
 				den2 = g12/(2.0*deltaXi*deltaEta);
@@ -191,16 +226,110 @@ unsigned int __stdcall  PoissonGrid( void* pVoid )//( Matrix* x, Matrix* y, doub
 		iter++;
 	}
 	while( (localx>=eps) || ( localy>=eps) );
+	times[1] = omp_get_wtime();
 	epsxy[0] = localx;
 	epsxy[1]= localy;
 	epsxy[2] = iter;
-	times[1] = omp_get_wtime();
 
 	delete xnew;
 	delete ynew;
 
 	return 0;
 }
+
+
+//Poisson solver for field variable computation u, T
+unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt )
+{
+	//thread info for velocity solver
+	//x grid, ygrid, velocity container matrix, xlen, ylen, nthreads
+	Matrix* fnew = new Matrix( f->GetNumRows(), f->GetNumCols() );
+	double epsf;
+	omp_lock_t epsf_lock;
+	omp_init_lock(&epsf_lock); //initialize lock 
+	//metrics
+	double f_temp, g11, g12, g22, den1, den2,den3,den4,den,source;
+	double xSubXi,xSubEta,ySubXi,ySubEta;
+	double deltaXi = xlen/(double)(x->GetNumRows()-1);
+	double deltaEta = ylen/(double)(x->GetNumCols()-1);
+	double J, Q;
+	g11 = g12 = g22 = (double)(0);
+	int i, j, iter = 0;
+	//derivatives
+	xSubXi = xSubEta = ySubXi = ySubEta = (double)(0);
+	double localf = 0.0;
+	omp_set_num_threads( nt );
+	//start the Jacobi algorithm
+	do
+	{
+		//cout<<"======="<<endl;
+		//f->DebugMatrix();
+#pragma omp parallel for shared( f, iter,deltaXi,deltaEta,localf ) private( i,f_temp,g11,g12,g22,den1,den2,den3,den,source,J,Q,xSubXi,xSubEta,ySubXi,ySubEta,epsf )
+		for ( i=1;i<x->GetNumRows()-1;i++ )
+		{
+			localf = 0.0;
+			for ( j=1;j<x->GetNumCols()-1;j++ )
+			{
+				localf = 0.0;
+				xSubXi = ( x->GetAt(i+1,j) - x->GetAt(i-1, j) )/(2.0*deltaXi);
+				xSubEta = ( x->GetAt(i, j+1) - x->GetAt(i, j-1) )/(2.0*deltaEta);
+				ySubXi = ( y->GetAt(i+1, j) - y->GetAt(i-1, j) )/(2.0*deltaXi);
+				ySubEta = ( y->GetAt(i, j+1) - y->GetAt(i, j-1) )/(2.0*deltaEta);
+
+				g11 = xSubEta*xSubEta + ySubEta*ySubEta;   
+				g12 = xSubXi*xSubEta + ySubXi*ySubEta;
+				g22 = xSubXi*xSubXi + ySubXi*ySubXi;
+				J = xSubXi*ySubEta - xSubEta*ySubXi;
+				Q = 0.0;//-10.01*exp(-10.0*fabs(j*deltaXi-0.5));
+				//-----------------denominators----------------------
+				den1 = g11/(deltaXi*deltaXi);
+				den2 = g12/(2.0*deltaXi*deltaEta);
+				den3 = g22/(deltaEta*deltaEta);
+				den4 = J*J*Q/(2.0*deltaEta);
+				source = J*J*pDrop/mu;
+				den = 2.0*g11/(deltaXi*deltaXi)+2.0*g22/(deltaEta*deltaEta);
+				f_temp = ( den1*(f->GetAt(i+1, j) + f->GetAt(i-1, j) )
+					-den2*( f->GetAt(i+1, j+1) - f->GetAt(i+1, j-1) 
+					- f->GetAt(i-1, j+1) + f->GetAt(i-1, j-1) )
+					+ den3*( f->GetAt(i, j+1 ) + f->GetAt(i, j-1 ) ) 
+					//+ den4*ySubEta - source )/den;
+					+ den4*( f->GetAt(i,j+1)-f->GetAt(i,j-1) ) - source )/den;
+				fnew->SetAt( i,j,f_temp );
+
+				epsf = fabs( f_temp - (f->GetAt(i,j)) );
+			}
+			//update the residual under a lock, after each j station is computed
+			//by a omp thread
+			omp_set_lock( &epsf_lock );
+			{
+				if ( epsf > localf )
+					localf = epsf;
+			}
+			//cout<<"localf :"<<localf<<endl;
+			omp_unset_lock( &epsf_lock );
+		}
+		//update 
+		for ( int p=1;p<x->GetNumRows()-1;p++ )
+		{
+			for ( int q=1;q<x->GetNumCols()-1;q++ )
+			{
+				f->SetAt(p,q, fnew->GetAt(p,q) );
+			}
+		}
+		//update BC
+		UpdateNeumannBoundary( *f, 0, 0, f->GetNumCols()-1, 1 );
+
+#pragma omp atomic
+		iter++;
+		//cout<<"localf :"<<localf<<endl;
+	}
+	while( (localf>=eps) );//(localf>=eps) );
+
+	delete fnew;
+	//cout<<localf<<endl;
+	return 0;
+}
+
 
 int main ( int argc, char* argv[] )
 {
@@ -217,8 +346,12 @@ int main ( int argc, char* argv[] )
 	//read cmd line args
 	readargs( argc, argv );
 	int nx, ny;
-	nx = 101;
+	nx = 51;
 	ny = 41;
+	int nxsmall, nysmall;
+	nxsmall = 11;
+	nysmall = 41;
+
 	//allocate 0th
 	xfin = new Matrix( nx, ny );
 	yfin = new Matrix( nx, ny );
@@ -307,7 +440,11 @@ int main ( int argc, char* argv[] )
 	t1info.fName = "gridfin.dat";
 	t1info.eps_lock = lock0;
 	t1info.times = times0;
+#ifdef _DEBUG
+	t1info.nthreads = 1;
+#else
 	t1info.nthreads = 4;
+#endif
 	///////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////
@@ -355,39 +492,40 @@ int main ( int argc, char* argv[] )
 	t2info.fName = "gridfluid.dat";
 	t2info.eps_lock = lock1;
 	t2info.times = times1;
+#ifdef _DEBUG
+	t2info.nthreads = 1;
+#else
 	t2info.nthreads = 4;
+#endif
 	///////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////
 	//                                LOWER BASE GRID          ////////////////////////////////
 	///////////////////////////////////////////////////////////////////////////////////////////
 	//allocate memory
-	int nxsmall, nysmall;
-	nxsmall = 21;
-	nysmall = 41;
 	xlbase = new Matrix( nxsmall, nysmall );
 	ylbase = new Matrix( nxsmall, nysmall );
 	//lower boundary
-	for ( int i=0;i<nx;i++ )
+	for ( int i=0;i<nxsmall;i++ )
 	{
 		xlbase->SetAt( i, 0, -( basethk/(double)(nxsmall-1) )*(double)(nxsmall-1-i) );
 		ylbase->SetAt( i, 0, 0 );
 	}
 	//left boundary
 	//dy = ystn->GetAt(0,0)/(double)(ny-1);
-	for ( int j=0;j<ny;j++ )
+	for ( int j=0;j<nysmall;j++ )
 	{
 		xlbase->SetAt( 0, j, -basethk );
 		ylbase->SetAt( 0, j, (ystn->GetAt(0,0)/(double)(nysmall-1))*(double)(j) );//ymin + (ystn->GetAt(0,0)/(double)(ny-1))*(double)j );
 	}
 	//right boundary
-	for ( int j=0;j<ny;j++ )
+	for ( int j=0;j<nysmall;j++ )
 	{
 		xlbase->SetAt( nxsmall-1, j, 0 );
 		ylbase->SetAt( nxsmall-1, j, ( ystn->GetAt(0,0)/(double)(nysmall-1) )*(double)j );
 	}
 	//upper boundary
-	for ( int i=0;i<nx;i++ )
+	for ( int i=0;i<nxsmall;i++ )
 	{
 		xlbase->SetAt( i, nysmall-1, -( basethk/(double)(nxsmall-1) )*(double)(nxsmall-1-i) );
 		ylbase->SetAt( i, nysmall-1, ystn->GetAt(0,0));//
@@ -403,7 +541,11 @@ int main ( int argc, char* argv[] )
 	t3info.fName = "gridlbase.dat";
 	t3info.eps_lock = lock2;
 	t3info.times = times2;
+#ifdef _DEBUG
+	t3info.nthreads = 1;
+#else
 	t3info.nthreads = 2;
+#endif
 	//PoissonGrid( (void*)&t3info );
 	//WriteGrid( xlbase, ylbase, "gridlbase.dat" );
 	///////////////////////////////////////////////////////////////////////////////////////////
@@ -414,26 +556,26 @@ int main ( int argc, char* argv[] )
 	xubase = new Matrix( nxsmall, nysmall );
 	yubase = new Matrix( nxsmall, nysmall );
 	//lower boundary
-	for ( int i=0;i<nx;i++ )
+	for ( int i=0;i<nxsmall;i++ )
 	{
 		xubase->SetAt( i, 0, -( basethk/(double)(nxsmall-1) )*(double)(nxsmall-1-i) );
 		yubase->SetAt( i, 0, ystn->GetAt(0,0) );
 	}
 	//left boundary
 	//dy = ystn->GetAt(0,0)/(double)(ny-1);
-	for ( int j=0;j<ny;j++ )
+	for ( int j=0;j<nysmall;j++ )
 	{
 		xubase->SetAt( 0, j, -basethk );
 		yubase->SetAt( 0, j, ystn->GetAt(0,0) + ((spacing-ystn->GetAt(0,0))/(double)(nysmall-1))*(double)(j) );//ymin + (ystn->GetAt(0,0)/(double)(ny-1))*(double)j );
 	}
 	//right boundary
-	for ( int j=0;j<ny;j++ )
+	for ( int j=0;j<nysmall;j++ )
 	{
 		xubase->SetAt( nxsmall-1, j, 0 );
 		yubase->SetAt( nxsmall-1, j, ystn->GetAt(0,0) + ( (spacing-ystn->GetAt(0,0))/(double)(nysmall-1) )*(double)j );
 	}
 	//upper boundary
-	for ( int i=0;i<nx;i++ )
+	for ( int i=0;i<nxsmall;i++ )
 	{
 		xubase->SetAt( i, nysmall-1, -( basethk/(double)(nxsmall-1) )*(double)(nxsmall-1-i) );
 		yubase->SetAt( i, nysmall-1, spacing);//
@@ -450,7 +592,11 @@ int main ( int argc, char* argv[] )
 	t4info.fName = "gridubase.dat";
 	t4info.eps_lock = lock3;
 	t4info.times = times3;
+#ifdef _DEBUG
+	t4info.nthreads = 1;
+#else
 	t4info.nthreads = 2;
+#endif
 	///////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////
@@ -461,26 +607,26 @@ int main ( int argc, char* argv[] )
 	//ystn->DebugMatrix();
 	//cout<<ystn->GetAt(nx-1,0)<<endl;
 	//lower boundary
-	for ( int i=0;i<nx;i++ )
+	for ( int i=0;i<nxsmall;i++ )
 	{
 		xlchan->SetAt( i, 0, xlen + ( (1.0-xlen)/(double)(nxsmall-1) )*(double)(i) );
 		ylchan->SetAt( i, 0, 0 );
 	}
 	//left boundary
 	//dy = ystn->GetAt(0,0)/(double)(ny-1);
-	for ( int j=0;j<ny;j++ )
+	for ( int j=0;j<nysmall;j++ )
 	{
 		xlchan->SetAt( 0, j, xlen );
 		ylchan->SetAt( 0, j, ((ystn->GetAt(nx-1,0))/(double)(nysmall-1))*(double)(j) );//ymin + (ystn->GetAt(0,0)/(double)(ny-1))*(double)j );
 	}
 	//right boundary
-	for ( int j=0;j<ny;j++ )
+	for ( int j=0;j<nysmall;j++ )
 	{
 		xlchan->SetAt( nxsmall-1, j, 1.0 );
 		ylchan->SetAt( nxsmall-1, j, ( (ystn->GetAt(nx-1,0))/(double)(nysmall-1) )*(double)j );
 	}
 	//upper boundary
-	for ( int i=0;i<nx;i++ )
+	for ( int i=0;i<nxsmall;i++ )
 	{
 		xlchan->SetAt( i, nysmall-1, xlen + ( (1.0-xlen)/(double)(nxsmall-1) )*(double)(i) );
 		ylchan->SetAt( i, nysmall-1, ystn->GetAt(nx-1,0));//
@@ -496,7 +642,11 @@ int main ( int argc, char* argv[] )
 	t5info.fName = "gridlchan.dat";
 	t5info.eps_lock = lock4;
 	t5info.times = times4;
+#ifdef _DEBUG
+	t5info.nthreads = 1;
+#else
 	t5info.nthreads = 2;
+#endif
 	///////////////////////////////////////////////////////////////////////////////////////////
 
 	///////////////////////////////////////////////////////////////////////////////////////////
@@ -507,26 +657,26 @@ int main ( int argc, char* argv[] )
 	//ystn->DebugMatrix();
 	//cout<<ystn->GetAt(nx-1,0)<<endl;
 	//lower boundary
-	for ( int i=0;i<nx;i++ )
+	for ( int i=0;i<nxsmall;i++ )
 	{
 		xuchan->SetAt( i, 0, xlen + ( (1.0-xlen)/(double)(nxsmall-1) )*(double)(i) );
 		yuchan->SetAt( i, 0, ystn->GetAt(nx-1,0) );
 	}
 	//left boundary
 	//dy = ystn->GetAt(0,0)/(double)(ny-1);
-	for ( int j=0;j<ny;j++ )
+	for ( int j=0;j<nysmall;j++ )
 	{
 		xuchan->SetAt( 0, j, xlen );
 		yuchan->SetAt( 0, j, ystn->GetAt(nx-1,0) + ((spacing-ystn->GetAt(nx-1,0))/(double)(nysmall-1))*(double)(j) );//ymin + (ystn->GetAt(0,0)/(double)(ny-1))*(double)j );
 	}
 	//right boundary
-	for ( int j=0;j<ny;j++ )
+	for ( int j=0;j<nysmall;j++ )
 	{
 		xuchan->SetAt( nxsmall-1, j, 1.0 );
 		yuchan->SetAt( nxsmall-1, j, ystn->GetAt(nx-1,0) + ( (spacing-ystn->GetAt(nx-1,0))/(double)(nysmall-1) )*(double)j );
 	}
 	//upper boundary
-	for ( int i=0;i<nx;i++ )
+	for ( int i=0;i<nxsmall;i++ )
 	{
 		xuchan->SetAt( i, nysmall-1, xlen + ( (1.0-xlen)/(double)(nxsmall-1) )*(double)(i) );
 		yuchan->SetAt( i, nysmall-1, spacing);//
@@ -542,7 +692,16 @@ int main ( int argc, char* argv[] )
 	t6info.fName = "griduchan.dat";
 	t6info.eps_lock = lock5;
 	t6info.times = times5;
+#ifdef _DEBUG
+	t6info.nthreads = 1;
+#else
 	t6info.nthreads = 2;
+#endif
+
+	ufluid = new Matrix( xfluid->GetNumRows(), xfluid->GetNumCols(), false );
+	ulchan = new Matrix( xlchan->GetNumRows(), xlchan->GetNumCols(), false );
+	uuchan = new Matrix( xuchan->GetNumRows(), xuchan->GetNumCols(), false );
+
 
 
 	HANDLE t[6];
@@ -553,8 +712,43 @@ int main ( int argc, char* argv[] )
 	t[4] = (HANDLE)::_beginthreadex( NULL, 0, PoissonGrid, (void*)&t5info, 0, NULL );
 	t[5] = (HANDLE)::_beginthreadex( NULL, 0, PoissonGrid, (void*)&t6info, 0, NULL );
 	::WaitForMultipleObjects( 6, t, true, INFINITE );
+	//fluid velocity BC
+	for ( int i=0;i<nx;i++ )
+	{
+		ufluid->SetAt(i,0, 0. );
+		//ufluid->SetAt(i,ny-1, 1. );
+	
+	}
+	for ( int j=0;j<ny;j++ )
+	{
+		ufluid->SetAt( 0, j, 0. );
+		ufluid->SetAt( nx-1, j, 0. );
+	}
+	//lower channel BC
+	for ( int i=0;i<nxsmall;i++ )
+	{
+		ulchan->SetAt(i,0, 0. );
+		ulchan->SetAt(i,nysmall-1, 0. );
+		uuchan->SetAt(i,0, 0. );
+		uuchan->SetAt(i,nysmall-1, 0. );
 
+	}
+	for ( int j=0;j<nysmall;j++ )
+	{
+		ulchan->SetAt( 0, j, 0. );
+		ulchan->SetAt( nxsmall-1, j, 0. );
+		uuchan->SetAt( 0, j, 0. );
+		uuchan->SetAt( nxsmall-1, j, 0. );
+
+	}
+	//ufluid->DebugMatrix( );
 	//PoissonGrid( (void*)&t2info );
+	//WriteGrid( t2info.xgr, t2info.ygr, ufluid, NULL, t2info.fName );
+	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2 );
+	//SolverFluid( xlen, ylen );
+	PoissonField( xlchan, ylchan, ulchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2 );
+	PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2 );
+	//ufluid->DebugMatrix( );
 	cout<<"Time :"<<times0[1]-times0[0]<<" Eps x: "<<eps0[0]<<"  Eps y: "<<eps0[1]<<" Iterations: "<<eps0[2]<<endl;
 	cout<<"Time :"<<times1[1]-times1[0]<<" Eps x: "<<eps1[0]<<"  Eps y: "<<eps1[1]<<" Iterations: "<<eps1[2]<<endl;
 	cout<<"Time :"<<times2[1]-times2[0]<<" Eps x: "<<eps2[0]<<"  Eps y: "<<eps2[1]<<" Iterations: "<<eps2[2]<<endl;
@@ -562,12 +756,12 @@ int main ( int argc, char* argv[] )
 	cout<<"Time :"<<times4[1]-times4[0]<<" Eps x: "<<eps4[0]<<"  Eps y: "<<eps4[1]<<" Iterations: "<<eps4[2]<<endl;
 	cout<<"Time :"<<times5[1]-times5[0]<<" Eps x: "<<eps5[0]<<"  Eps y: "<<eps5[1]<<" Iterations: "<<eps5[2]<<endl;
 
-	WriteGrid( t1info.xgr, t1info.ygr, t1info.fName );
-	WriteGrid( t2info.xgr, t2info.ygr, t2info.fName );
-	WriteGrid( t3info.xgr, t3info.ygr, t3info.fName );
-	WriteGrid( t4info.xgr, t4info.ygr, t4info.fName );
-	WriteGrid( t5info.xgr, t5info.ygr, t5info.fName );
-	WriteGrid( t6info.xgr, t6info.ygr, t6info.fName );
+	WriteGrid( t1info.xgr, t1info.ygr, NULL, NULL, t1info.fName );
+	WriteGrid( t2info.xgr, t2info.ygr, ufluid, NULL, t2info.fName );
+	WriteGrid( t3info.xgr, t3info.ygr, NULL, NULL, t3info.fName );
+	WriteGrid( t4info.xgr, t4info.ygr, NULL, NULL, t4info.fName );
+	WriteGrid( t5info.xgr, t5info.ygr, ulchan, NULL, t5info.fName );
+	WriteGrid( t6info.xgr, t6info.ygr, uuchan, NULL, t6info.fName );
 
 	//clean up
 	delete xfin;
@@ -582,7 +776,9 @@ int main ( int argc, char* argv[] )
 	delete ylchan;
 	delete xuchan;
 	delete yuchan;
-
+	delete ufluid;
+	delete ulchan;
+	delete uuchan;
 	delete yvals;
 
 	//delete p;

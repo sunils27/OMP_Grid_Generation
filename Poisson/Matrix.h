@@ -14,6 +14,7 @@ private:
 	int nC;
 public:
 	Matrix(int nRows, int nCols);
+	Matrix(int nRows, int nCols, bool init);
 	int GetAt( int r, int c, double& val );
 	double GetAt( int r, int c );
 
