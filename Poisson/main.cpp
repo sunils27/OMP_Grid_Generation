@@ -67,34 +67,11 @@ thread_info t4info;
 thread_info t5info;
 thread_info t6info;
 
-unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt );
+//boundary condition functions
+//void (*applybc)(int) = NULL;
+void (*applybc)(Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate) = NULL;
 
-void UpdateNeumannBoundary( Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate )
-{
-	double tmp;
-	int lim = 0;
-	if ( iupdate ) //update for a given i, along column
-	{
-	}
-	if ( jupdate ) //update for a given j, along row
-	{
-		//lim = f->GetNumRows();
-		for ( int i=0;i<f.GetNumRows();i++ )
-		{
-			tmp = ( 4.0*f.GetAt(i,alongj-1) - f.GetAt(i,alongj-2) )/3.0;
-			f.SetAt( i, alongj, tmp );
-		}
-	}
-}
-
-void SolverFluid( double xlen, double ylen )
-{
-	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2 );
-	UpdateNeumannBoundary( *ufluid, 0, 0, ufluid->GetNumCols()-1, 1 );
-
-}
-
-
+unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate), int alongi, bool iupdate, int alongj, bool jupdate );//(Matrix&,int,bool,int,bool) );
 
 void readargs( int argc, char* argv[] )
 {
@@ -239,7 +216,7 @@ unsigned int __stdcall  PoissonGrid( void* pVoid )//( Matrix* x, Matrix* y, doub
 
 
 //Poisson solver for field variable computation u, T
-unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt )
+unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate), int alongi, bool iupdate, int alongj, bool jupdate )//(Matrix&,int,bool,int,bool) )
 {
 	//thread info for velocity solver
 	//x grid, ygrid, velocity container matrix, xlen, ylen, nthreads
@@ -317,7 +294,7 @@ unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double 
 			}
 		}
 		//update BC
-		UpdateNeumannBoundary( *f, 0, 0, f->GetNumCols()-1, 1 );
+		(bc)( *f, alongi, iupdate, alongj, jupdate);
 
 #pragma omp atomic
 		iter++;
@@ -744,10 +721,11 @@ int main ( int argc, char* argv[] )
 	//ufluid->DebugMatrix( );
 	//PoissonGrid( (void*)&t2info );
 	//WriteGrid( t2info.xgr, t2info.ygr, ufluid, NULL, t2info.fName );
-	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2 );
-	//SolverFluid( xlen, ylen );
-	PoissonField( xlchan, ylchan, ulchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2 );
-	PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2 );
+	//PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2, (void*)UpdateNeumannBoundary(*ufluid,  0, 0, ufluid->GetNumCols()-1, 1) );
+	applybc = UpdateNeumannBoundary; //point this to the BC function you want applied
+	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2, *applybc, ufluid->GetNumRows()-1, 1, ufluid->GetNumCols()-1, 1 );
+	PoissonField( xlchan, ylchan, ulchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, ulchan->GetNumRows()-1, 1, ulchan->GetNumCols()-1, 1 );
+	PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, ulchan->GetNumRows()-1, 1, uuchan->GetNumCols()-1, 1 );
 	//ufluid->DebugMatrix( );
 	cout<<"Time :"<<times0[1]-times0[0]<<" Eps x: "<<eps0[0]<<"  Eps y: "<<eps0[1]<<" Iterations: "<<eps0[2]<<endl;
 	cout<<"Time :"<<times1[1]-times1[0]<<" Eps x: "<<eps1[0]<<"  Eps y: "<<eps1[1]<<" Iterations: "<<eps1[2]<<endl;

@@ -70,3 +70,40 @@ void ApplyFieldDirichlet( Matrix* field, int i, int j )
 
 }
 
+void UpdateNeumannBoundary( Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate )
+{
+	double tmp;
+	if ( iupdate ) //update for a given i, along column
+	{
+		for ( int j=0;j<f.GetNumCols();j++ )
+		{
+			tmp = ( 4.0*f.GetAt(alongi-1,j) - f.GetAt(alongi-2,j) )/3.0;
+			f.SetAt( alongi, j, tmp );
+		}
+	}
+	if ( jupdate ) //update for a given j, along row
+	{
+		for ( int i=0;i<f.GetNumRows();i++ )
+		{
+			tmp = ( 4.0*f.GetAt(i,alongj-1) - f.GetAt(i,alongj-2) )/3.0;
+			f.SetAt( i, alongj, tmp );
+		}
+	}
+	//return 0;
+}
+
+void testfunc( )
+{
+	cout<<"test func "<<endl;
+}
+
+typedef struct
+{
+	int a;
+} params, *ptr_params;
+void testfunc2( int a )
+{
+	//ptr_params ptr = (ptr_params)(params);
+	//int a = ptr->a ;
+	cout<<"test function 2 "<<a<<endl;
+}
