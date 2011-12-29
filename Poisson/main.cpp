@@ -61,6 +61,9 @@ Matrix* uuchan;
 Matrix* Tfin;
 Matrix* Tlbase;
 Matrix* Tubase;
+//velocity field synchronization variables
+Matrix* vervel;
+Matrix* horvel; //vertical and horizontal velocity
 //thread info structs
 thread_info t1info;
 thread_info t2info;
@@ -74,7 +77,7 @@ thread_info t6info;
 void (*applybc)(Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate) = NULL;
 
 unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& , int , bool , int , bool ), vector<int> alongi, 
-	bool iupdate, vector<int> alongj, bool jupdate );//(Matrix&,int,bool,int,bool) );
+	vector<bool> iupdate, vector<int> alongj, vector<bool> jupdate );//(Matrix&,int,bool,int,bool) );
 
 void readargs( int argc, char* argv[] )
 {
@@ -219,8 +222,8 @@ unsigned int __stdcall  PoissonGrid( void* pVoid )//( Matrix* x, Matrix* y, doub
 
 
 //Poisson solver for field variable computation u, T
-unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& , int , bool , int , bool ), vector<int> alongi, bool iupdate, 
-	vector<int> alongj, bool jupdate )//(Matrix&,int,bool,int,bool) )
+unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& , int , bool , int , bool ), vector<int> alongi, vector<bool> iupdate, 
+	vector<int> alongj, vector<bool> jupdate )//(Matrix&,int,bool,int,bool) )
 {
 	//thread info for velocity solver
 	//x grid, ygrid, velocity container matrix, xlen, ylen, nthreads
@@ -302,7 +305,7 @@ unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double 
 		}
 		//update BC
 		for ( size_t bcount = 0;bcount<alongi.size();bcount++ )
-			(bc)( *f, alongi.at(bcount), iupdate, alongj.at(bcount), jupdate);
+			(bc)( *f, alongi.at(bcount), iupdate.at(bcount), alongj.at(bcount), jupdate.at(bcount));
 
 #pragma omp atomic
 		iter++;
@@ -336,6 +339,10 @@ int main ( int argc, char* argv[] )
 	int nxsmall, nysmall;
 	nxsmall = 11;
 	nysmall = 41;
+
+	//allocate synchronization matrices
+	vervel = new Matrix( 1, ny );
+	horvel = new Matrix( nxsmall, 1 );
 
 	//allocate 0th
 	xfin = new Matrix( nx, ny );
@@ -730,24 +737,28 @@ int main ( int argc, char* argv[] )
 	applybc = UpdateNeumannBoundary; //point this to the BC function you want applied
 	//solve fluid
 	vector<int> jstns, istns; //i and j stations
-	istns.push_back( ufluid->GetNumRows()-1 );
-	jstns.push_back( ufluid->GetNumCols()-1 );
-	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2, *applybc, istns, 1, jstns, 1 );
+	vector<bool> bcx, bcy;
+	istns.push_back( ufluid->GetNumRows()-1 ); bcx.push_back( 1 );
+	jstns.push_back( ufluid->GetNumCols()-1 ); bcy.push_back( 1 );
+	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2, *applybc, istns, bcx, jstns, bcy );
 
-	istns.clear();
-	jstns.clear();
-	istns.push_back( 0 );
-	jstns.push_back( 0 );
-	PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, istns, 1, jstns, 1 );
+	istns.clear(); bcx.clear();
+	jstns.clear(); bcy.clear();
+	istns.push_back( 0 ); bcx.push_back( 1 );
+	istns.push_back( 0 ); bcx.push_back( 0 );
+	jstns.push_back( 0 ); bcy.push_back( 1 );
+	jstns.push_back( uuchan->GetNumCols()-1 ); bcy.push_back( 1 );
+	PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, istns, bcx, jstns, bcy );
 	//PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, ulchan->GetNumRows()-1, 1, uuchan->GetNumCols()-1, 1 );
 
-	istns.clear();
-	jstns.clear();
-	jstns.push_back( 0 );
-	jstns.push_back( ulchan->GetNumCols()-1 );
-	istns.push_back( 0 );
-	istns.push_back( 0 ); //sunils this is kind of hacky...you need to push vectors of the same size coz that's how PoissonField de-references
-	PoissonField( xlchan, ylchan, ulchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, istns, 0, jstns, 1 );
+	istns.clear(); bcx.clear();
+	jstns.clear(); bcy.clear();
+	jstns.push_back( 0 ); bcy.push_back( 1 );
+	jstns.push_back( ulchan->GetNumCols()-1 ); bcy.push_back( 1 );
+	istns.push_back( 0 ); bcx.push_back( 0 );
+	istns.push_back( 0 ); bcx.push_back( 0 );
+	//sunils this is kind of hacky...you need to push vectors of the same size coz that's how PoissonField de-references
+	PoissonField( xlchan, ylchan, ulchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, istns, bcx, jstns, bcy );
 	//ufluid->DebugMatrix( );
 	cout<<"Time :"<<times0[1]-times0[0]<<" Eps x: "<<eps0[0]<<"  Eps y: "<<eps0[1]<<" Iterations: "<<eps0[2]<<endl;
 	cout<<"Time :"<<times1[1]-times1[0]<<" Eps x: "<<eps1[0]<<"  Eps y: "<<eps1[1]<<" Iterations: "<<eps1[2]<<endl;
@@ -779,6 +790,8 @@ int main ( int argc, char* argv[] )
 	delete ufluid;
 	delete ulchan;
 	delete uuchan;
+	delete vervel;
+	delete horvel;
 	delete yvals;
 
 	//delete p;

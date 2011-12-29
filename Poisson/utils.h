@@ -128,3 +128,8 @@ void testfunc2( int a )
 	//int a = ptr->a ;
 	cout<<"test function 2 "<<a<<endl;
 }
+
+void syncfunc( Matrix* ds_from, Matrix* ds_to, omp_lock_t& lck )
+{
+	//acquire lock, copy from to to and release lock
+}
