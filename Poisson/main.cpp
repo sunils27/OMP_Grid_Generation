@@ -9,10 +9,12 @@ using namespace std;
 #include <windows.h>
 #include <process.h>
 #include <gsl/gsl_vector.h>
+#include <vector>
  extern "C" {
    // Get some declarations
    #include "utils.h"
  }
+
 const double eps = 1.0E-12;
 const double pDrop = -10.0e-3;   //set the value of pressure drop
 const double mu = 1.0e-3;	//set the value of dynamic viscosity
@@ -71,7 +73,8 @@ thread_info t6info;
 //void (*applybc)(int) = NULL;
 void (*applybc)(Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate) = NULL;
 
-unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate), int alongi, bool iupdate, int alongj, bool jupdate );//(Matrix&,int,bool,int,bool) );
+unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& , int , bool , int , bool ), vector<int> alongi, 
+	bool iupdate, vector<int> alongj, bool jupdate );//(Matrix&,int,bool,int,bool) );
 
 void readargs( int argc, char* argv[] )
 {
@@ -216,7 +219,8 @@ unsigned int __stdcall  PoissonGrid( void* pVoid )//( Matrix* x, Matrix* y, doub
 
 
 //Poisson solver for field variable computation u, T
-unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate), int alongi, bool iupdate, int alongj, bool jupdate )//(Matrix&,int,bool,int,bool) )
+unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& , int , bool , int , bool ), vector<int> alongi, bool iupdate, 
+	vector<int> alongj, bool jupdate )//(Matrix&,int,bool,int,bool) )
 {
 	//thread info for velocity solver
 	//x grid, ygrid, velocity container matrix, xlen, ylen, nthreads
@@ -235,6 +239,9 @@ unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double 
 	//derivatives
 	xSubXi = xSubEta = ySubXi = ySubEta = (double)(0);
 	double localf = 0.0;
+#ifdef _DEBUG
+	nt = 1;
+#endif
 	omp_set_num_threads( nt );
 	//start the Jacobi algorithm
 	do
@@ -294,7 +301,8 @@ unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double 
 			}
 		}
 		//update BC
-		(bc)( *f, alongi, iupdate, alongj, jupdate);
+		for ( size_t bcount = 0;bcount<alongi.size();bcount++ )
+			(bc)( *f, alongi.at(bcount), iupdate, alongj.at(bcount), jupdate);
 
 #pragma omp atomic
 		iter++;
@@ -719,13 +727,27 @@ int main ( int argc, char* argv[] )
 
 	}
 	//ufluid->DebugMatrix( );
-	//PoissonGrid( (void*)&t2info );
-	//WriteGrid( t2info.xgr, t2info.ygr, ufluid, NULL, t2info.fName );
-	//PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2, (void*)UpdateNeumannBoundary(*ufluid,  0, 0, ufluid->GetNumCols()-1, 1) );
 	applybc = UpdateNeumannBoundary; //point this to the BC function you want applied
-	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2, *applybc, ufluid->GetNumRows()-1, 1, ufluid->GetNumCols()-1, 1 );
-	PoissonField( xlchan, ylchan, ulchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, ulchan->GetNumRows()-1, 1, ulchan->GetNumCols()-1, 1 );
-	PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, ulchan->GetNumRows()-1, 1, uuchan->GetNumCols()-1, 1 );
+	//solve fluid
+	vector<int> jstns, istns; //i and j stations
+	istns.push_back( ufluid->GetNumRows()-1 );
+	jstns.push_back( ufluid->GetNumCols()-1 );
+	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2, *applybc, istns, 1, jstns, 1 );
+
+	istns.clear();
+	jstns.clear();
+	istns.push_back( 0 );
+	jstns.push_back( 0 );
+	PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, istns, 1, jstns, 1 );
+	//PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, ulchan->GetNumRows()-1, 1, uuchan->GetNumCols()-1, 1 );
+
+	istns.clear();
+	jstns.clear();
+	jstns.push_back( 0 );
+	jstns.push_back( ulchan->GetNumCols()-1 );
+	istns.push_back( 0 );
+	istns.push_back( 0 ); //sunils this is kind of hacky...you need to push vectors of the same size coz that's how PoissonField de-references
+	PoissonField( xlchan, ylchan, ulchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, istns, 0, jstns, 1 );
 	//ufluid->DebugMatrix( );
 	cout<<"Time :"<<times0[1]-times0[0]<<" Eps x: "<<eps0[0]<<"  Eps y: "<<eps0[1]<<" Iterations: "<<eps0[2]<<endl;
 	cout<<"Time :"<<times1[1]-times1[0]<<" Eps x: "<<eps1[0]<<"  Eps y: "<<eps1[1]<<" Iterations: "<<eps1[2]<<endl;

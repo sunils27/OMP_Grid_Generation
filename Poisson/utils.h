@@ -75,21 +75,42 @@ void UpdateNeumannBoundary( Matrix& f, int alongi, bool iupdate, int alongj, boo
 	double tmp;
 	if ( iupdate ) //update for a given i, along column
 	{
-		for ( int j=0;j<f.GetNumCols();j++ )
+		if ( alongi != 0 )
 		{
-			tmp = ( 4.0*f.GetAt(alongi-1,j) - f.GetAt(alongi-2,j) )/3.0;
-			f.SetAt( alongi, j, tmp );
+			for ( int j=0;j<f.GetNumCols();j++ )
+			{
+				tmp = ( 4.0*f.GetAt(alongi-1,j) - f.GetAt(alongi-2,j) )/3.0;
+				f.SetAt( alongi, j, tmp );
+			}
+		}
+		else if ( alongi == 0 )
+		{
+			for ( int j=0;j<f.GetNumCols();j++ )
+			{
+				tmp = ( 4.0*f.GetAt(alongi+1,j) - f.GetAt(alongi+2,j) )/3.0;
+				f.SetAt( alongi, j, tmp );
+			}
 		}
 	}
 	if ( jupdate ) //update for a given j, along row
 	{
-		for ( int i=0;i<f.GetNumRows();i++ )
+		if ( alongj != 0 )
 		{
-			tmp = ( 4.0*f.GetAt(i,alongj-1) - f.GetAt(i,alongj-2) )/3.0;
-			f.SetAt( i, alongj, tmp );
+			for ( int i=0;i<f.GetNumRows();i++ )
+			{
+				tmp = ( 4.0*f.GetAt(i,alongj-1) - f.GetAt(i,alongj-2) )/3.0;
+				f.SetAt( i, alongj, tmp );
+			}
+		}
+		else if ( alongj == 0 )
+		{
+			for ( int i=0;i<f.GetNumRows();i++ )
+			{
+				tmp = ( 4.0*f.GetAt(i,alongj+1) - f.GetAt(i,alongj+2) )/3.0;
+				f.SetAt( i, alongj, tmp );
+			}
 		}
 	}
-	//return 0;
 }
 
 void testfunc( )
