@@ -20,6 +20,10 @@ const double pDrop = -10.0e-3;   //set the value of pressure drop
 const double mu = 1.0e-3;	//set the value of dynamic viscosity
 
 //GLOBALS
+//boundary condition functions
+//void (*applybc)(int) = NULL;
+void (*applybc)(Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate) = NULL;
+
 typedef struct 
 {
 	Matrix* xgr;
@@ -33,6 +37,19 @@ typedef struct
 	double* times; //times[0] is st and times[1] is et
 	int nthreads;
 }thread_info, *ptr_tinfo;
+
+typedef struct
+{
+	//thread info for velocity solver
+	//x grid, ygrid, velocity container matrix, xlen, ylen, nthreads
+	Matrix* xgr;
+	Matrix* ygr;
+	Matrix* vel;
+	double xlen;
+	double ylen;
+	int nt;
+	void (*applybc)(Matrix& , int , bool , int , bool );
+}fsolver_info, *ptr_fsolver;
 
 Matrix* yvals;
 double basethk;
@@ -64,6 +81,8 @@ Matrix* Tubase;
 //velocity field synchronization variables
 Matrix* vervel;
 Matrix* horvel; //vertical and horizontal velocity
+omp_lock_t vervel_lock;
+omp_lock_t horvel_lock;
 //thread info structs
 thread_info t1info;
 thread_info t2info;
@@ -72,12 +91,8 @@ thread_info t4info;
 thread_info t5info;
 thread_info t6info;
 
-//boundary condition functions
-//void (*applybc)(int) = NULL;
-void (*applybc)(Matrix& f, int alongi, bool iupdate, int alongj, bool jupdate) = NULL;
-
-unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& , int , bool , int , bool ), vector<int> alongi, 
-	vector<bool> iupdate, vector<int> alongj, vector<bool> jupdate );//(Matrix&,int,bool,int,bool) );
+unsigned int __stdcall PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& , int , bool , int , bool ), vector<int> alongi, 
+	vector<bool> iupdate, vector<int> alongj, vector<bool> jupdate, double times[2], double eps[2] );//(Matrix&,int,bool,int,bool) );
 
 void readargs( int argc, char* argv[] )
 {
@@ -222,9 +237,11 @@ unsigned int __stdcall  PoissonGrid( void* pVoid )//( Matrix* x, Matrix* y, doub
 
 
 //Poisson solver for field variable computation u, T
-unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& , int , bool , int , bool ), vector<int> alongi, vector<bool> iupdate, 
-	vector<int> alongj, vector<bool> jupdate )//(Matrix&,int,bool,int,bool) )
+unsigned int __stdcall PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double ylen, int nt, void (*bc)(Matrix& , int , bool , int , bool ), vector<int> alongi, 
+	vector<bool> iupdate, vector<int> alongj, vector<bool> jupdate, double times[2], double epsout[2] )//(Matrix&,int,bool,int,bool) )
 {
+	//synchronization stations
+	int synx, syny = -1;
 	//thread info for velocity solver
 	//x grid, ygrid, velocity container matrix, xlen, ylen, nthreads
 	Matrix* fnew = new Matrix( f->GetNumRows(), f->GetNumCols() );
@@ -246,9 +263,12 @@ unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double 
 	nt = 1;
 #endif
 	omp_set_num_threads( nt );
+	times[0] = omp_get_wtime();
 	//start the Jacobi algorithm
 	do
 	{
+		//synchronize to read
+		//readsyncfunc( f, vervel, vervel_lock, f->GetNumCols()-1, -1 );
 		//cout<<"======="<<endl;
 		//f->DebugMatrix();
 #pragma omp parallel for shared( f, iter,deltaXi,deltaEta,localf ) private( i,f_temp,g11,g12,g22,den1,den2,den3,den,source,J,Q,xSubXi,xSubEta,ySubXi,ySubEta,epsf )
@@ -304,15 +324,21 @@ unsigned int PoissonField( Matrix* x, Matrix* y, Matrix* f, double xlen, double 
 			}
 		}
 		//update BC
-		for ( size_t bcount = 0;bcount<alongi.size();bcount++ )
-			(bc)( *f, alongi.at(bcount), iupdate.at(bcount), alongj.at(bcount), jupdate.at(bcount));
-
+		if ( bc != NULL )
+		{
+			for ( size_t bcount = 0;bcount<alongi.size();bcount++ )
+				(bc)( *f, alongi.at(bcount), iupdate.at(bcount), alongj.at(bcount), jupdate.at(bcount));
+		}
+		//synchronize to write
+		//writesyncfunc( vervel, f, vervel_lock, f->GetNumCols()-1, -1 );
 #pragma omp atomic
 		iter++;
 		//cout<<"localf :"<<localf<<endl;
 	}
 	while( (localf>=eps) );//(localf>=eps) );
-
+	times[1] = omp_get_wtime();
+	epsout[0] = localf;
+	epsout[1] = iter;
 	delete fnew;
 	//cout<<localf<<endl;
 	return 0;
@@ -343,6 +369,9 @@ int main ( int argc, char* argv[] )
 	//allocate synchronization matrices
 	vervel = new Matrix( 1, ny );
 	horvel = new Matrix( nxsmall, 1 );
+	//locks
+	omp_init_lock( &vervel_lock );
+	omp_init_lock( &horvel_lock );
 
 	//allocate 0th
 	xfin = new Matrix( nx, ny );
@@ -738,17 +767,23 @@ int main ( int argc, char* argv[] )
 	//solve fluid
 	vector<int> jstns, istns; //i and j stations
 	vector<bool> bcx, bcy;
+	double tfluid[2];
+	double tlchan[2];
+	double tuchan[2];
+	double eps_fluid[2];//eps and number of iterations
+	double eps_uchan[2];
+	double eps_lchan[2];
 	istns.push_back( ufluid->GetNumRows()-1 ); bcx.push_back( 1 );
 	jstns.push_back( ufluid->GetNumCols()-1 ); bcy.push_back( 1 );
-	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2, *applybc, istns, bcx, jstns, bcy );
+	PoissonField( xfluid, yfluid, ufluid, xlen, ylen, 2, *applybc, istns, bcx, jstns, bcy, tfluid, eps_fluid );
 
 	istns.clear(); bcx.clear();
 	jstns.clear(); bcy.clear();
-	istns.push_back( 0 ); bcx.push_back( 1 );
+	istns.push_back( 0 ); bcx.push_back( 0 );
 	istns.push_back( 0 ); bcx.push_back( 0 );
 	jstns.push_back( 0 ); bcy.push_back( 1 );
 	jstns.push_back( uuchan->GetNumCols()-1 ); bcy.push_back( 1 );
-	PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, istns, bcx, jstns, bcy );
+	PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, istns, bcx, jstns, bcy, tuchan, eps_uchan );
 	//PoissonField( xuchan, yuchan, uuchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, ulchan->GetNumRows()-1, 1, uuchan->GetNumCols()-1, 1 );
 
 	istns.clear(); bcx.clear();
@@ -758,7 +793,7 @@ int main ( int argc, char* argv[] )
 	istns.push_back( 0 ); bcx.push_back( 0 );
 	istns.push_back( 0 ); bcx.push_back( 0 );
 	//sunils this is kind of hacky...you need to push vectors of the same size coz that's how PoissonField de-references
-	PoissonField( xlchan, ylchan, ulchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, istns, bcx, jstns, bcy );
+//	PoissonField( xlchan, ylchan, ulchan, (1.0-xlen), ystn->GetAt(nx-1,0), 2, *applybc, istns, bcx, jstns, bcy, tlchan, eps_lchan );
 	//ufluid->DebugMatrix( );
 	cout<<"Time :"<<times0[1]-times0[0]<<" Eps x: "<<eps0[0]<<"  Eps y: "<<eps0[1]<<" Iterations: "<<eps0[2]<<endl;
 	cout<<"Time :"<<times1[1]-times1[0]<<" Eps x: "<<eps1[0]<<"  Eps y: "<<eps1[1]<<" Iterations: "<<eps1[2]<<endl;
@@ -767,12 +802,22 @@ int main ( int argc, char* argv[] )
 	cout<<"Time :"<<times4[1]-times4[0]<<" Eps x: "<<eps4[0]<<"  Eps y: "<<eps4[1]<<" Iterations: "<<eps4[2]<<endl;
 	cout<<"Time :"<<times5[1]-times5[0]<<" Eps x: "<<eps5[0]<<"  Eps y: "<<eps5[1]<<" Iterations: "<<eps5[2]<<endl;
 
+	cout<<"Fluid solver times :"<<endl;
+	cout<<"Time :"<<tfluid[1]-tfluid[0]<<" Eps :"<< eps_fluid[0]<<" Iterations :"<<eps_fluid[1]<<endl;
+	cout<<"Time :"<<tuchan[1]-tuchan[0]<<" Eps :"<< eps_uchan[0]<<" Iterations :"<<eps_uchan[1]<<endl;
+	cout<<"Time :"<<tlchan[1]-tlchan[0]<<" Eps :"<< eps_lchan[0]<<" Iterations :"<<eps_lchan[1]<<endl;
+
 	WriteGrid( t1info.xgr, t1info.ygr, NULL, NULL, t1info.fName );
 	WriteGrid( t2info.xgr, t2info.ygr, ufluid, NULL, t2info.fName );
 	WriteGrid( t3info.xgr, t3info.ygr, NULL, NULL, t3info.fName );
 	WriteGrid( t4info.xgr, t4info.ygr, NULL, NULL, t4info.fName );
 	WriteGrid( t5info.xgr, t5info.ygr, ulchan, NULL, t5info.fName );
 	WriteGrid( t6info.xgr, t6info.ygr, uuchan, NULL, t6info.fName );
+
+	//tests
+	for ( int j=0;j<vervel->GetNumCols();j++ )
+		cout<<vervel->GetAt(0,j)<<" ";
+	cout<<endl;
 
 	//clean up
 	delete xfin;
@@ -793,6 +838,10 @@ int main ( int argc, char* argv[] )
 	delete vervel;
 	delete horvel;
 	delete yvals;
+
+	//destroy locks
+	omp_destroy_lock( &vervel_lock );
+	omp_destroy_lock( &horvel_lock );
 
 	//delete p;
 	return 0;

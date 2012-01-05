@@ -129,7 +129,29 @@ void testfunc2( int a )
 	cout<<"test function 2 "<<a<<endl;
 }
 
-void syncfunc( Matrix* ds_from, Matrix* ds_to, omp_lock_t& lck )
+void readsyncfunc( Matrix* ds_from, Matrix* ds_to, omp_lock_t& lck, int synx, int syny )
 {
 	//acquire lock, copy from to to and release lock
+	//lock ds_from, read ds_from, unlock ds_from, write to f (ds_to)
+	omp_set_lock( &lck );
+	{
+		for ( int j=0;j<ds_to->GetNumCols();j++ )
+		{
+			ds_to->SetAt( synx, j, ds_from->GetAt(synx,j) );
+		}
+	}
+	omp_unset_lock( &lck );
+}
+
+void writesyncfunc( Matrix* ds_from, Matrix* ds_to, omp_lock_t&  lck, int synx, int syny )
+{
+	//read ds_from, lock ds_to, write to ds_to, unlock ds_to
+	omp_set_lock( &lck );
+	{
+		for ( int j=0;j<ds_to->GetNumCols();j++ )
+		{
+			ds_to->SetAt( synx, j, ds_from->GetAt(synx,j) );
+		}
+	}
+	omp_unset_lock( &lck );
 }
